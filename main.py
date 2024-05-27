@@ -5,7 +5,7 @@ import json
 import os
 import base64
 from dotenv import load_dotenv
-from PIL import Image
+from PIL import Image, ImageOps
 from io import BytesIO
 
 from sizu import chat
@@ -43,9 +43,22 @@ async def load_attachments_images(attachments):
                         data = await resp.read()
                         image = Image.open(BytesIO(data))
 
-                        # 画像のリサイズ。最も長い辺が512pxになるよう調整
-                        max_size = (512, 512)
-                        image.thumbnail(max_size, Image.LANCZOS)
+                        # 最も長い辺が512px未満の場合、リサイズを行わない
+                        if image.width > 512 or image.height > 512:
+                            max_size = (512, 512)
+                            image.thumbnail(max_size, Image.LANCZOS)
+
+                        # 透過情報がある場合、白色で背景を塗りつぶし
+                        if image.mode in ["RGBA", "LA"]:
+                            background = Image.new("RGB", image.size, (255, 255, 255))
+                            background.paste(
+                                image, mask=image.split()[3]
+                            )  # 3はアルファチャネル
+                            image = background
+                        elif image.mode == "P":
+                            image = ImageOps.colorize(
+                                image.convert("L"), (0, 0, 0), (255, 255, 255)
+                            )
 
                         # JPEG形式で画像を保存し、Base64でエンコード
                         buffered = BytesIO()
