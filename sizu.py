@@ -1,5 +1,7 @@
 import yaml
 import os
+import aiohttp
+from datetime import datetime
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from openai import APIError, Timeout
@@ -23,6 +25,41 @@ load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_idea_anniversary_tag",
+            "description": "本日のお題を取得します。 e.g. 女の子, 桜",
+            "parameters": {},
+        },
+    }
+]
+
+
+# pixiv 本日のテーマの取得
+async def get_idea_anniversary_tag():
+    today = datetime.now().strftime("%Y-%m-%d")
+    url = f"https://www.pixiv.net/ajax/idea/anniversary/{today}"
+
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    # awaitを追加して非同期処理を待ちます。
+                    data = await response.json()
+                    idea_anniversary_tag = data.get("body", {}).get(
+                        "idea_anniversary_tag", None
+                    )
+                    return {"theme": idea_anniversary_tag}
+                else:
+                    # status_codeではなくstatusを使用する
+                    print(f"Request failed with status code: {response.status}")
+                    return None
+        except Exception as e:
+            print(f"その他の例外：{e}")
+            return None
+
 
 async def isFlagged(prompt) -> bool:
     if not prompt:
@@ -31,6 +68,27 @@ async def isFlagged(prompt) -> bool:
     response = await client.moderations.create(input=prompt)
     flagged = response.results[0].flagged
     return flagged
+
+
+async def completions(messages, tool_choice="auto"):
+    try:
+        response = await client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            frequency_penalty=frequency_penalty,
+            presence_penalty=presence_penalty,
+            max_tokens=max_tokens,
+            tools=tools,
+            tool_choice=tool_choice,
+        )
+    except APIError as e:
+        print(f"APIError: {e}")
+        return sizu_msg["timeout"]
+    except Timeout as e:
+        print(f"Timeout: {e}")
+        return sizu_msg["timeout"]
+    return response.choices[0]
 
 
 async def chat(user_name, user_message, base64_images):
@@ -61,20 +119,28 @@ async def chat(user_name, user_message, base64_images):
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
-    try:
-        response = await client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            frequency_penalty=frequency_penalty,
-            presence_penalty=presence_penalty,
-            max_tokens=max_tokens,
-        )
-    except APIError as e:
-        print(f"APIError: {e}")
-        return sizu_msg["timeout"]
-    except Timeout as e:
-        print(f"Timeout: {e}")
-        return sizu_msg["timeout"]
+    # チャット呼び出し
+    response_message = await completions(messages=messages)
 
-    return response.choices[0].message.content
+    # ツール呼び出しが行われた場合
+    if response_message.finish_reason == "tool_calls":
+        theme = await get_idea_anniversary_tag()
+        messages.append(
+            {
+                "role": "function",
+                "content": str(theme),
+                "name": "get_idea_anniversary_tag",
+            }
+        )
+        messages.append(
+            {
+                "role": "system",
+                "content": "受け取ったthemeから連想される話題を話してください",
+            }
+        )
+        response_message = await completions(messages=messages, tool_choice="none")
+    return getattr(
+        getattr(response_message, "message", sizu_msg["timeout"]),
+        "content",
+        sizu_msg["timeout"],
+    )
