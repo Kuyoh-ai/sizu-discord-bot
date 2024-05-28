@@ -39,11 +39,11 @@ async def chat(user_name, user_message, base64_images):
         return sizu_msg["no_prompt"]
 
     # prompt構築
-    prompt = f"ユーザー名:[{user_name}]\n{user_message}"
+    prompt = f"ユーザー名:{user_name}\n{user_message}"
 
     # モデレーション
     if await isFlagged(prompt):
-        prompt = f"ユーザー名:[{user_name}]\n<<検閲されたメッセージ>>"
+        prompt = f"ユーザー名:{user_name}\n<<検閲されたメッセージ>>"
 
     # messages構築
     user_content = [

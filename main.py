@@ -86,7 +86,7 @@ async def on_message(message):
         if all(name not in channel_name for name in target_channel_names):
             return
 
-    if client.user.mentioned_in(message) or message.type == discord.MessageType.reply:
+    if client.user.mentioned_in(message):
         # メッセージにリアクションを付ける
         await message.add_reaction(reaction_emoji or "✔")
         # 入力中...表示
