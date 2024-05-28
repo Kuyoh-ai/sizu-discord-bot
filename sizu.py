@@ -2,6 +2,7 @@ import yaml
 import os
 import aiohttp
 from datetime import datetime
+import pytz
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from openai import APIError, Timeout
@@ -39,7 +40,8 @@ tools = [
 
 # pixiv 本日のテーマの取得
 async def get_idea_anniversary_tag():
-    today = datetime.now().strftime("%Y-%m-%d")
+    jst = pytz.timezone("Asia/Tokyo")
+    today = datetime.now(jst).strftime("%Y-%m-%d")
     url = f"https://www.pixiv.net/ajax/idea/anniversary/{today}"
 
     async with aiohttp.ClientSession() as session:
