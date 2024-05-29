@@ -20,6 +20,7 @@ load_dotenv()
 config = load_config()
 target_channel_names = config["target_channel_names"]
 reaction_emoji = config["reaction_emoji"]
+black_id_list = config["black_id_list"]
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -91,8 +92,11 @@ async def on_message(message):
         await message.add_reaction(reaction_emoji or "✔")
         # 入力中...表示
         async with message.channel.typing():
-            # ユーザー名
+            # ユーザーID, 名前
+            user_id = message.author.id
             user_name = message.author.display_name
+            # ブラックリスト調査
+            black_flag = str(user_id) in black_id_list
             # メッセージのコンテンツからメンションを削除します。
             # clean_contentはメンションをユーザー名に置換しますが、ここでは完全に取り除きます。
             content_without_mentions = message.content
@@ -107,7 +111,9 @@ async def on_message(message):
             if len(attachments) > 0:
                 base64_images = await load_attachments_images(attachments)
 
-            response = await chat(user_name, content_without_mentions, base64_images)
+            response = await chat(
+                user_name, content_without_mentions, base64_images, black_flag
+            )
         # サーバーからの応答としてメッセージを送信する
         await message.reply(response)
 

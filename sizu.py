@@ -16,6 +16,7 @@ def load_sizu_setting():
 sizu_setting = load_sizu_setting()
 model = sizu_setting["model"]
 system_prompt = sizu_setting["system_prompt"]
+black_system_prompt = sizu_setting["black_system_prompt"]
 temperature = sizu_setting["temperature"]
 frequency_penalty = sizu_setting["frequency_penalty"]
 presence_penalty = sizu_setting["presence_penalty"]
@@ -93,7 +94,7 @@ async def completions(messages, tool_choice="auto"):
     return response.choices[0]
 
 
-async def chat(user_name, user_message, base64_images):
+async def chat(user_name, user_message, base64_images, black_flag=False):
     # 空の場合
     if not user_message and len(base64_images) == 0:
         return sizu_msg["no_prompt"]
@@ -118,7 +119,10 @@ async def chat(user_name, user_message, base64_images):
                 }
             )
     messages = [
-        {"role": "system", "content": system_prompt},
+        {
+            "role": "system",
+            "content": black_system_prompt if black_flag else system_prompt,
+        },
         {"role": "user", "content": user_content},
     ]
     # チャット呼び出し

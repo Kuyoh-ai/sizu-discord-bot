@@ -1,4 +1,5 @@
 {
   "target_channel_names": ["雑談", "呟き"],
-  "reaction_emoji": "🍧"
+  "reaction_emoji": "🍧",
+  "black_id_list": ["620274662995263488"]
 }
