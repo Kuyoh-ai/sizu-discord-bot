@@ -70,6 +70,61 @@ async def load_attachments_images(attachments):
     return images
 
 
+async def load_images(attachments, stickers):
+    processed_image_count = 0
+    images = []
+    async with aiohttp.ClientSession() as session:
+        # 添付ファイルの処理
+        for attachment in attachments:
+            if processed_image_count >= 2:
+                break
+            if any(
+                attachment.filename.lower().endswith(ext)
+                for ext in [".png", ".jpg", ".jpeg", ".gif"]
+            ):
+                image_data = await fetch_and_process_image(session, attachment.url)
+                if image_data:
+                    images.append(image_data)
+                    processed_image_count += 1
+
+        # ステッカーの処理
+        for sticker in stickers:
+            if processed_image_count >= 2:
+                break
+            image_data = await fetch_and_process_image(session, sticker.url)
+            if image_data:
+                images.append(image_data)
+                processed_image_count += 1
+
+    return images
+
+
+async def fetch_and_process_image(session, url):
+    async with session.get(url) as resp:
+        if resp.status == 200:
+            data = await resp.read()
+            image = Image.open(BytesIO(data))
+
+            if image.width > 512 or image.height > 512:
+                max_size = (512, 512)
+                image.thumbnail(max_size, Image.LANCZOS)
+
+            if image.mode in ["RGBA", "LA"]:
+                background = Image.new("RGB", image.size, (255, 255, 255))
+                background.paste(image, mask=image.split()[3])
+                image = background
+            elif image.mode == "P":
+                image = ImageOps.colorize(
+                    image.convert("L"), (0, 0, 0), (255, 255, 255)
+                )
+
+            buffered = BytesIO()
+            image.save(buffered, format="JPEG")
+            img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+            return img_str
+    return None
+
+
 @client.event
 async def on_ready():
     print(f"ログインしました: {client.user}")
@@ -116,6 +171,52 @@ async def on_message(message):
             )
         # サーバーからの応答としてメッセージを送信する
         await message.reply(response)
+
+    # メンション以外のメッセージに対する処理
+    # すべてのメッセージを読みに行っているため注意
+    else:
+        # botのメッセージは反応しない
+        if message.author.bot:
+            return
+
+        # メッセージがスティッカー
+        if len(message.stickers) > 0 and message.stickers[0] is not None:
+            previous_messages = []
+            async for previous_message in message.channel.history(limit=3):
+                if previous_message.id != message.id:
+                    previous_messages.append(previous_message)
+            if previous_messages:
+                # 過去のメッセージが全てスタンプ
+                is_same_sticker = (
+                    lambda msg: not msg.author.bot
+                    and len(msg.stickers) > 0
+                    and msg.stickers[0] is not None
+                )
+                if (
+                    all([is_same_sticker(msg) for msg in previous_messages])
+                    and message.stickers[0] is not None
+                ):
+                    if len(message.stickers) > 0:
+                        sticker = message.stickers[0]
+                        sticker_name = sticker.name
+                        if all(
+                            [
+                                sticker.id == p_msg.stickers[0].id
+                                for p_msg in previous_messages
+                            ]
+                        ):
+                            await message.channel.send(stickers=[sticker])
+                            # 入力中...表示
+                            async with message.channel.typing():
+                                # 名前
+                                user_name = message.author.display_name
+
+                                base64_images = await load_images([], [sticker])
+                                response = await chat(
+                                    user_name, sticker_name, base64_images, False
+                                )
+                            # サーバーからの応答としてメッセージを送信する
+                            await message.channel.send(response)
 
 
 TOKEN = os.getenv("SIZU_BOT_TOKEN")
