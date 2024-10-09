@@ -4,6 +4,8 @@ import aiohttp
 import json
 import os
 import base64
+import datetime
+import re
 from dotenv import load_dotenv
 from PIL import Image, ImageOps
 from io import BytesIO
@@ -130,10 +132,59 @@ async def on_ready():
     print(f"ログインしました: {client.user}")
 
 
+# キャッシュ用の辞書を追加
+bot_messages = {}  # ボットのメッセージID: リプライ先のメッセージID
+user_messages = {}  # メッセージID: (内容, タイムスタンプ, 送信者名)
+
+
+def clean_up_cache():
+    current_time = datetime.datetime.now()
+    one_hour_ago = current_time - datetime.timedelta(hours=1)
+    # 古いエントリを削除
+    keys_to_remove = [
+        msg_id
+        for msg_id, (content, timestamp, author_name) in user_messages.items()
+        if timestamp <= one_hour_ago
+    ]
+    for msg_id in keys_to_remove:
+        del user_messages[msg_id]
+    # user_messagesに存在しないリプライ先を持つボットのメッセージを削除
+    bot_msgs_to_remove = [
+        bot_msg_id
+        for bot_msg_id, orig_msg_id in bot_messages.items()
+        if orig_msg_id not in user_messages
+    ]
+    for bot_msg_id in bot_msgs_to_remove:
+        del bot_messages[bot_msg_id]
+
+
+# メンションを無効化する関数を修正
+def disable_mentions(content):
+    zero_width_space = "\u200b"
+    # ユーザーメンションを無効化
+    content = re.sub(r"<@!?(\d+)>", f"<@{zero_width_space}\\1>", content)
+    # ロールメンションを無効化
+    content = re.sub(r"<@&(\d+)>", f"<@&{zero_width_space}\\1>", content)
+    # チャンネルメンションを無効化
+    content = re.sub(r"<#(\d+)>", f"<#{zero_width_space}\\1>", content)
+    return content
+
+
 @client.event
 async def on_message(message):
-    if message.author == client.user or message.author.bot:
+    # キャッシュのクリーンアップ
+    clean_up_cache()
+
+    # ボットのメッセージは無視
+    if message.author.bot:
         return
+
+    # メッセージをキャッシュ
+    user_messages[message.id] = (
+        message.content,
+        datetime.datetime.now(),
+        message.author.display_name,
+    )
 
     # チャンネル名による制御
     channel_name = message.channel.name
@@ -170,15 +221,12 @@ async def on_message(message):
                 user_name, content_without_mentions, base64_images, black_flag
             )
         # サーバーからの応答としてメッセージを送信する
-        await message.reply(response)
+        reply_message = await message.reply(response)
+        # リプライ関係をキャッシュ
+        bot_messages[reply_message.id] = message.id
 
     # メンション以外のメッセージに対する処理
-    # すべてのメッセージを読みに行っているため注意
     else:
-        # botのメッセージは反応しない
-        if message.author.bot:
-            return
-
         # メッセージがスティッカー
         if len(message.stickers) > 0 and message.stickers[0] is not None:
             previous_messages = []
@@ -217,6 +265,44 @@ async def on_message(message):
                                 )
                             # サーバーからの応答としてメッセージを送信する
                             await message.channel.send(response)
+
+
+@client.event
+async def on_message_delete(message):
+    # キャッシュのクリーンアップ
+    clean_up_cache()
+
+    # 削除されたメッセージがキャッシュに存在するか確認
+    if message.id in user_messages:
+        # ボットのメッセージでリプライ先が削除されたメッセージの場合
+        for bot_msg_id, original_msg_id in bot_messages.items():
+            if original_msg_id == message.id:
+                try:
+                    bot_message = await message.channel.fetch_message(bot_msg_id)
+                except discord.NotFound:
+                    continue  # ボットのメッセージが見つからない場合
+                # 削除されたメッセージの内容と送信者名を取得
+                deleted_message_content, _, author_name = user_messages[message.id]
+                if not deleted_message_content:
+                    return  # 内容が取得できない場合は中断
+
+                # メンションを無効化
+                deleted_message_content = disable_mentions(deleted_message_content)
+
+                # 引用の作成
+                quote_content = f"[{author_name}]\n{deleted_message_content}"
+                quote_lines = quote_content.splitlines()
+                quote = "\n".join(f"> {line}" for line in quote_lines) + "\n"
+
+                # ボットのメッセージを編集して引用を追加
+                new_content = f"{quote}\n{bot_message.content}"
+                await bot_message.edit(content=new_content)
+                # 処理済みのメッセージを辞書から削除
+                del bot_messages[bot_msg_id]
+                break  # 一つのボットメッセージのみを処理
+
+        # 削除されたメッセージをキャッシュから削除
+        del user_messages[message.id]
 
 
 TOKEN = os.getenv("SIZU_BOT_TOKEN")
